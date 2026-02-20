@@ -14,13 +14,12 @@ CLIENT_A_SECRET="${CLIENT_A_SECRET:-demo-client-a-secret}"
 CLIENT_B_ID="${CLIENT_B_ID:-demo-client-b}"
 CLIENT_B_SECRET="${CLIENT_B_SECRET:-demo-client-b-secret}"
 
-echo "Waiting for Keycloak at ${KEYCLOAK_URL} ..."
-until curl -fsS "${KEYCLOAK_URL}/realms/master/.well-known/openid-configuration" >/dev/null; do
+echo "Waiting for Keycloak admin API at ${KEYCLOAK_URL} ..."
+until /opt/keycloak/bin/kcadm.sh config credentials --server "${KEYCLOAK_URL}" --realm master --user "${ADMIN_USER}" --password "${ADMIN_PASSWORD}" >/dev/null 2>&1; do
   sleep 2
 done
 
-echo "Logging in to admin API ..."
-/opt/keycloak/bin/kcadm.sh config credentials --server "${KEYCLOAK_URL}" --realm master --user "${ADMIN_USER}" --password "${ADMIN_PASSWORD}"
+echo "Logged in to admin API"
 
 if ! /opt/keycloak/bin/kcadm.sh get "realms/${REALM_NAME}" >/dev/null 2>&1; then
   echo "Creating realm ${REALM_NAME}"

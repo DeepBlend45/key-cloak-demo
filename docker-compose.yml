@@ -14,7 +14,7 @@ services:
     restart: unless-stopped
 
   keycloak-init:
-    image: keycloak-demo:26.1-curl
+    image: quay.io/keycloak/keycloak:26.1
     container_name: keycloak-init
     depends_on:
       - keycloak

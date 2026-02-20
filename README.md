@@ -22,8 +22,6 @@ cp .env.example .env
 docker compose up -d --build
 ```
 
-`Dockerfile.keycloak` で Keycloak イメージに `curl` を追加しており、`keycloak-init` でも同じイメージを利用します。
-
 > 以前の設定が残っているとクライアント設定が古いままになるため、必要に応じて `docker compose down -v` 後に再起動してください。
 
 3. Keycloak 管理画面にアクセス
@@ -97,3 +95,4 @@ docker compose down
 - `scripts/init-keycloak.sh` の構文チェック（OK）
 - `auth_code_receiver.py` の Python 構文チェック（OK）
 - `demo-client-a` のブラウザログイン設定（standard flow / redirect URI / web origins）が init スクリプト内で有効化されていることを確認
+- Keycloak 初期待機を `kcadm.sh` リトライ方式に変更し、`curl` 非依存で起動可能なことを確認
