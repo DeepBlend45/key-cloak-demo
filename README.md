@@ -19,8 +19,12 @@ cp .env.example .env
 2. コンテナ起動（Keycloak + 初期化スクリプト）
 
 ```bash
-docker compose up -d
+docker compose up -d --build
 ```
+
+`Dockerfile.keycloak` で Keycloak イメージに `curl` を追加しており、`keycloak-init` でも同じイメージを利用します。
+
+> 以前の設定が残っているとクライアント設定が古いままになるため、必要に応じて `docker compose down -v` 後に再起動してください。
 
 3. Keycloak 管理画面にアクセス
 
@@ -86,3 +90,10 @@ uv run uvicorn auth_code_receiver:app --host 0.0.0.0 --port 9000
 ```bash
 docker compose down
 ```
+
+
+## 直近PRのコンフリクト解消後チェック
+
+- `scripts/init-keycloak.sh` の構文チェック（OK）
+- `auth_code_receiver.py` の Python 構文チェック（OK）
+- `demo-client-a` のブラウザログイン設定（standard flow / redirect URI / web origins）が init スクリプト内で有効化されていることを確認
