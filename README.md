@@ -22,8 +22,6 @@ cp .env.example .env
 docker compose up -d
 ```
 
-> 以前の設定が残っているとクライアント設定が古いままになるため、必要に応じて `docker compose down -v` 後に再起動してください。
-
 3. Keycloak 管理画面にアクセス
 
 - URL: <http://localhost:8080>
