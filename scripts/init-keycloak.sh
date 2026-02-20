@@ -51,9 +51,29 @@ if ! /opt/keycloak/bin/kcadm.sh get clients -r "${REALM_NAME}" -q clientId="${CL
     -s publicClient=false \
     -s secret="${CLIENT_A_SECRET}" \
     -s directAccessGrantsEnabled=true \
-    -s standardFlowEnabled=false \
-    -s serviceAccountsEnabled=true
+    -s standardFlowEnabled=true \
+    -s serviceAccountsEnabled=true \
+    -s 'redirectUris=["http://localhost:9000/*"]' \
+    -s 'webOrigins=["*"]' \
+    -s rootUrl="http://localhost:9000" \
+    -s baseUrl="http://localhost:9000"
 fi
+
+CLIENT_A_INTERNAL_ID=$(/opt/keycloak/bin/kcadm.sh get clients -r "${REALM_NAME}" -q clientId="${CLIENT_A_ID}" --fields id --format csv --noquotes | tail -n1)
+
+echo "Ensuring client A supports browser login flow"
+/opt/keycloak/bin/kcadm.sh update "clients/${CLIENT_A_INTERNAL_ID}" -r "${REALM_NAME}" \
+  -s enabled=true \
+  -s protocol=openid-connect \
+  -s publicClient=false \
+  -s secret="${CLIENT_A_SECRET}" \
+  -s directAccessGrantsEnabled=true \
+  -s standardFlowEnabled=true \
+  -s serviceAccountsEnabled=true \
+  -s 'redirectUris=["http://localhost:9000/*"]' \
+  -s 'webOrigins=["*"]' \
+  -s rootUrl="http://localhost:9000" \
+  -s baseUrl="http://localhost:9000" >/dev/null
 
 if ! /opt/keycloak/bin/kcadm.sh get clients -r "${REALM_NAME}" -q clientId="${CLIENT_B_ID}" --fields id | grep -q '"id"'; then
   echo "Creating client B (${CLIENT_B_ID})"
