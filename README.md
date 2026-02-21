@@ -61,9 +61,11 @@ curl -s -X POST "http://localhost:8080/realms/demo/protocol/openid-connect/token
 
 - `/` : ブラウザ操作用のトップページ
 - `/login-page` : Keycloak のログイン画面へリダイレクト
-- `/callback/view` : 認可コード受信後にトークン交換し、**トークン JSON と JWT ペイロードを HTML で表示**
+- `/callback/view` : 認可コード受信後にトークン取得し、**トークン JSON と JWT ペイロードを HTML で表示**
+- `/token-exchange/view` : 取得済み access token を使って **Client A → Client B の TokenExchange** をブラウザで実行し、交換後トークンを表示
 - `/login` : 認可 URL を JSON で返却（API用途）
 - `/callback` : 認可コード受信とトークン交換を JSON で返却（API用途）
+- `/token-exchange` : TokenExchange 結果を JSON で返却（API用途）
 
 ### 起動
 
@@ -81,6 +83,7 @@ uv run uvicorn auth_code_receiver:app --host 0.0.0.0 --port 9000
 - `KEYCLOAK_REALM` (default: `demo`)
 - `OIDC_CLIENT_ID` (default: `demo-client-a`)
 - `OIDC_CLIENT_SECRET` (default: `demo-client-a-secret`)
+- `OIDC_CLIENT_B_ID` (default: `demo-client-b`)
 - `OIDC_REDIRECT_URI` (default: `http://localhost:9000/callback/view`)
 
 停止する場合:
