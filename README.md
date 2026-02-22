@@ -3,9 +3,10 @@
 Docker 上で Keycloak を起動し、`docker compose up` と同時に次のデモ設定を自動作成します。
 
 - デモユーザ: `demo-user`
+- ユーザクライアント: `demo-user-client`
 - デモクライアントA: `demo-client-a`
 - デモクライアントB: `demo-client-b`
-- `demo-user` が client A でユーザトークン取得可能
+- `demo-user` が **user client** 経由でユーザトークン取得可能（aud は client A）
 - client A が Token Exchange で audience=client B のアクセストークン取得可能
 
 ## 使い方
@@ -36,13 +37,13 @@ docker compose up -d
 
 ## 動作確認
 
-### 1) demo-user が client A 向けアクセストークンを取得
+### 1) demo-user が user client 経由でアクセストークン取得（aud は client A）
 
 ```bash
 curl -s -X POST "http://localhost:8080/realms/demo/protocol/openid-connect/token" \
   -d "grant_type=password" \
-  -d "client_id=demo-client-a" \
-  -d "client_secret=demo-client-a-secret" \
+  -d "client_id=demo-user-client" \
+  -d "client_secret=demo-user-client-secret" \
   -d "username=demo-user" \
   -d "password=demo-user-password"
 ```
@@ -85,8 +86,10 @@ uv run uvicorn auth_code_receiver:app --host 0.0.0.0 --port 9000
 
 - `KEYCLOAK_BASE_URL` (default: `http://localhost:8080`)
 - `KEYCLOAK_REALM` (default: `demo`)
-- `OIDC_CLIENT_ID` (default: `demo-client-a`)
-- `OIDC_CLIENT_SECRET` (default: `demo-client-a-secret`)
+- `OIDC_USER_CLIENT_ID` (default: `demo-user-client`)
+- `OIDC_USER_CLIENT_SECRET` (default: `demo-user-client-secret`)
+- `OIDC_CLIENT_A_ID` (default: `demo-client-a`)
+- `OIDC_CLIENT_A_SECRET` (default: `demo-client-a-secret`)
 - `OIDC_CLIENT_B_ID` (default: `demo-client-b`)
 - `OIDC_REDIRECT_URI` (default: `http://localhost:9000/callback/view`)
 
@@ -146,12 +149,12 @@ python minimal_access_token.py
 
 このスクリプトは以下のみを実行します。
 
-- `grant_type=password` で `demo-client-a` + `demo-user` のアクセストークン取得
+- `grant_type=password` で `demo-user-client` + `demo-user` のアクセストークン取得（audは `demo-client-a`）
 - 取得した `access_token` の JWT payload 表示
 
 
 ## CLI中心の検証
 
-- 手順詳細: `docs/flows.md`
+- 手順詳細: `docs/flows.md`（user client -> client A -> client B）
 - ワンコマンド検証: `bash scripts/verify_flow.sh`
 - JWTデコード/検証: `python token_tools.py --token <JWT> --expected-aud <aud>`

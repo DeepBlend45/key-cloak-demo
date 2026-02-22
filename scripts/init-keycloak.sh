@@ -9,6 +9,8 @@ REALM_NAME="${REALM_NAME:-demo}"
 DEMO_USER_USERNAME="${DEMO_USER_USERNAME:-demo-user}"
 DEMO_USER_PASSWORD="${DEMO_USER_PASSWORD:-demo-user-password}"
 
+USER_CLIENT_ID="${USER_CLIENT_ID:-demo-user-client}"
+USER_CLIENT_SECRET="${USER_CLIENT_SECRET:-demo-user-client-secret}"
 CLIENT_A_ID="${CLIENT_A_ID:-demo-client-a}"
 CLIENT_A_SECRET="${CLIENT_A_SECRET:-demo-client-a-secret}"
 CLIENT_B_ID="${CLIENT_B_ID:-demo-client-b}"
@@ -46,6 +48,17 @@ USER_ID=$(/opt/keycloak/bin/kcadm.sh get users -r "${REALM_NAME}" -q username="$
 
 # Clear possible temporary lock/throttle state for demo user if present.
 /opt/keycloak/bin/kcadm.sh delete "attack-detection/brute-force/users/${USER_ID}" -r "${REALM_NAME}" >/dev/null 2>&1 || true
+
+if ! /opt/keycloak/bin/kcadm.sh get clients -r "${REALM_NAME}" -q clientId="${USER_CLIENT_ID}" --fields id | grep -q '"id"'; then
+  echo "Creating user client (${USER_CLIENT_ID})"
+  /opt/keycloak/bin/kcadm.sh create clients -r "${REALM_NAME}"     -s clientId="${USER_CLIENT_ID}"     -s enabled=true     -s protocol=openid-connect     -s publicClient=false     -s secret="${USER_CLIENT_SECRET}"     -s directAccessGrantsEnabled=true     -s standardFlowEnabled=false     -s serviceAccountsEnabled=false
+fi
+
+USER_CLIENT_INTERNAL_ID=$(/opt/keycloak/bin/kcadm.sh get clients -r "${REALM_NAME}" -q clientId="${USER_CLIENT_ID}" --fields id --format csv --noquotes | tail -n1)
+
+if ! /opt/keycloak/bin/kcadm.sh get "clients/${USER_CLIENT_INTERNAL_ID}/protocol-mappers/models" -r "${REALM_NAME}" | grep -q 'audience-client-a-on-user-client'; then
+  /opt/keycloak/bin/kcadm.sh create "clients/${USER_CLIENT_INTERNAL_ID}/protocol-mappers/models" -r "${REALM_NAME}"     -s name='audience-client-a-on-user-client'     -s protocol='openid-connect'     -s protocolMapper='oidc-audience-mapper'     -s 'config."included.client.audience"'="${CLIENT_A_ID}"     -s 'config."id.token.claim"'='false'     -s 'config."access.token.claim"'='true' >/dev/null
+fi
 
 if ! /opt/keycloak/bin/kcadm.sh get clients -r "${REALM_NAME}" -q clientId="${CLIENT_A_ID}" --fields id | grep -q '"id"'; then
   echo "Creating client A (${CLIENT_A_ID})"
@@ -143,14 +156,15 @@ Demo user lock state cleared (best effort).
 Demo credentials:
 - Realm: ${REALM_NAME}
 - User: ${DEMO_USER_USERNAME} / ${DEMO_USER_PASSWORD}
+- User Client: ${USER_CLIENT_ID} / ${USER_CLIENT_SECRET}
 - Client A: ${CLIENT_A_ID} / ${CLIENT_A_SECRET}
 - Client B: ${CLIENT_B_ID} / ${CLIENT_B_SECRET}
 
-User token (client A):
+User token (via user client, aud should include client A):
 curl -s -X POST "${KEYCLOAK_URL}/realms/${REALM_NAME}/protocol/openid-connect/token" \
   -d "grant_type=password" \
-  -d "client_id=${CLIENT_A_ID}" \
-  -d "client_secret=${CLIENT_A_SECRET}" \
+  -d "client_id=${USER_CLIENT_ID}" \
+  -d "client_secret=${USER_CLIENT_SECRET}" \
   -d "username=${DEMO_USER_USERNAME}" \
   -d "password=${DEMO_USER_PASSWORD}"
 

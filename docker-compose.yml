@@ -22,6 +22,8 @@ services:
       REALM_NAME: demo
       DEMO_USER_USERNAME: demo-user
       DEMO_USER_PASSWORD: demo-user-password
+      USER_CLIENT_ID: demo-user-client
+      USER_CLIENT_SECRET: demo-user-client-secret
       CLIENT_A_ID: demo-client-a
       CLIENT_A_SECRET: demo-client-a-secret
       CLIENT_B_ID: demo-client-b

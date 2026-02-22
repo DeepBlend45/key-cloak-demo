@@ -3,14 +3,16 @@ set -euo pipefail
 
 BASE_URL="${KEYCLOAK_BASE_URL:-http://localhost:8080}"
 REALM="${KEYCLOAK_REALM:-demo}"
-A_ID="${OIDC_CLIENT_ID:-demo-client-a}"
-A_SECRET="${OIDC_CLIENT_SECRET:-demo-client-a-secret}"
+USER_CLIENT_ID="${OIDC_USER_CLIENT_ID:-demo-user-client}"
+USER_CLIENT_SECRET="${OIDC_USER_CLIENT_SECRET:-demo-user-client-secret}"
+A_ID="${OIDC_CLIENT_A_ID:-demo-client-a}"
+A_SECRET="${OIDC_CLIENT_A_SECRET:-demo-client-a-secret}"
 B_ID="${OIDC_CLIENT_B_ID:-demo-client-b}"
 USER="${DEMO_USER_USERNAME:-demo-user}"
 PASS="${DEMO_USER_PASSWORD:-demo-user-password}"
 
 USER_JSON=$(curl -s -X POST "${BASE_URL}/realms/${REALM}/protocol/openid-connect/token" \
-  -d "grant_type=password" -d "client_id=${A_ID}" -d "client_secret=${A_SECRET}" \
+  -d "grant_type=password" -d "client_id=${USER_CLIENT_ID}" -d "client_secret=${USER_CLIENT_SECRET}" \
   -d "username=${USER}" -d "password=${PASS}")
 
 USER_TOKEN=$(USER_JSON="$USER_JSON" python - <<'PY'

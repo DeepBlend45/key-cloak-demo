@@ -16,8 +16,9 @@ from token_tools import decode_jwt_payload
 
 KEYCLOAK_BASE_URL = os.getenv("KEYCLOAK_BASE_URL", "http://localhost:8080")
 REALM = os.getenv("KEYCLOAK_REALM", "demo")
-CLIENT_ID = os.getenv("OIDC_CLIENT_ID", "demo-client-a")
-CLIENT_SECRET = os.getenv("OIDC_CLIENT_SECRET", "demo-client-a-secret")
+CLIENT_ID = os.getenv("OIDC_USER_CLIENT_ID", "demo-user-client")
+CLIENT_SECRET = os.getenv("OIDC_USER_CLIENT_SECRET", "demo-user-client-secret")
+EXPECTED_AUD = os.getenv("EXPECTED_AUD", "demo-client-a")
 USERNAME = os.getenv("DEMO_USER_USERNAME", "demo-user")
 PASSWORD = os.getenv("DEMO_USER_PASSWORD", "demo-user-password")
 
@@ -53,7 +54,9 @@ def main() -> int:
 
     if access_token:
         print("\n=== decoded access_token payload ===")
-        print(json.dumps(decode_jwt_payload(access_token), ensure_ascii=False, indent=2))
+        payload = decode_jwt_payload(access_token)
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        print(f"\nexpected aud: {EXPECTED_AUD}, actual aud: {payload.get('aud')}")
 
     return 0
 
