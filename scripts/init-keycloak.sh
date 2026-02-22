@@ -23,8 +23,11 @@ echo "Logged in to admin API"
 
 if ! /opt/keycloak/bin/kcadm.sh get "realms/${REALM_NAME}" >/dev/null 2>&1; then
   echo "Creating realm ${REALM_NAME}"
-  /opt/keycloak/bin/kcadm.sh create realms -s realm="${REALM_NAME}" -s enabled=true
+  /opt/keycloak/bin/kcadm.sh create realms -s realm="${REALM_NAME}" -s enabled=true -s bruteForceProtected=false
 fi
+
+echo "Ensuring realm settings for demo login stability"
+/opt/keycloak/bin/kcadm.sh update "realms/${REALM_NAME}" -s enabled=true -s bruteForceProtected=false >/dev/null
 
 if ! /opt/keycloak/bin/kcadm.sh get "roles/user" -r "${REALM_NAME}" >/dev/null 2>&1; then
   echo "Creating realm role: user"
@@ -52,8 +55,8 @@ if ! /opt/keycloak/bin/kcadm.sh get clients -r "${REALM_NAME}" -q clientId="${CL
     -s directAccessGrantsEnabled=true \
     -s standardFlowEnabled=true \
     -s serviceAccountsEnabled=true \
-    -s 'redirectUris=["http://localhost:9000/*"]' \
-    -s 'webOrigins=["*"]' \
+    -s 'redirectUris=["http://localhost:9000/*","http://127.0.0.1:9000/*"]' \
+    -s 'webOrigins=["http://localhost:9000","http://127.0.0.1:9000"]' \
     -s rootUrl="http://localhost:9000" \
     -s baseUrl="http://localhost:9000"
 fi
@@ -69,8 +72,8 @@ echo "Ensuring client A supports browser login flow"
   -s directAccessGrantsEnabled=true \
   -s standardFlowEnabled=true \
   -s serviceAccountsEnabled=true \
-  -s 'redirectUris=["http://localhost:9000/*"]' \
-  -s 'webOrigins=["*"]' \
+  -s 'redirectUris=["http://localhost:9000/*","http://127.0.0.1:9000/*"]' \
+  -s 'webOrigins=["http://localhost:9000","http://127.0.0.1:9000"]' \
   -s rootUrl="http://localhost:9000" \
   -s baseUrl="http://localhost:9000" >/dev/null
 

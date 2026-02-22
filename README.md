@@ -26,6 +26,8 @@ docker compose up -d --build
 
 > 以前の設定が残っているとクライアント設定が古いままになるため、必要に応じて `docker compose down -v` 後に再起動してください。
 
+> ログイン後に「アクセスが集中している」系の画面になる場合は、過去の失敗ログインや古い realm 設定が残っている可能性があるため、`docker compose down -v` 後に再起動してください（init スクリプトで brute force 保護を無効化しています）。
+
 3. Keycloak 管理画面にアクセス
 
 - URL: <http://localhost:8080>
