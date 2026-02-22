@@ -95,6 +95,19 @@ fi
 
 CLIENT_B_INTERNAL_ID=$(/opt/keycloak/bin/kcadm.sh get clients -r "${REALM_NAME}" -q clientId="${CLIENT_B_ID}" --fields id --format csv --noquotes | tail -n1)
 
+echo "Ensuring demo roles for downscope"
+/opt/keycloak/bin/kcadm.sh create roles -r "${REALM_NAME}" -s name='role:user:read' >/dev/null 2>&1 || true
+/opt/keycloak/bin/kcadm.sh create roles -r "${REALM_NAME}" -s name='role:user:write' >/dev/null 2>&1 || true
+/opt/keycloak/bin/kcadm.sh create roles -r "${REALM_NAME}" -s name='role:b:invoke' >/dev/null 2>&1 || true
+
+/opt/keycloak/bin/kcadm.sh add-roles -r "${REALM_NAME}" --uusername "${DEMO_USER_USERNAME}" --rolename 'role:user:read' >/dev/null 2>&1 || true
+/opt/keycloak/bin/kcadm.sh add-roles -r "${REALM_NAME}" --uusername "${DEMO_USER_USERNAME}" --rolename 'role:user:write' >/dev/null 2>&1 || true
+
+# Ensure audience mapper: token for client A includes audience client A
+if ! /opt/keycloak/bin/kcadm.sh get "clients/${CLIENT_A_INTERNAL_ID}/protocol-mappers/models" -r "${REALM_NAME}" | grep -q 'audience-client-a'; then
+  /opt/keycloak/bin/kcadm.sh create "clients/${CLIENT_A_INTERNAL_ID}/protocol-mappers/models" -r "${REALM_NAME}"     -s name='audience-client-a'     -s protocol='openid-connect'     -s protocolMapper='oidc-audience-mapper'     -s 'config."included.client.audience"'="${CLIENT_A_ID}"     -s 'config."id.token.claim"'='false'     -s 'config."access.token.claim"'='true' >/dev/null
+fi
+
 echo "Enabling permissions on client B"
 /opt/keycloak/bin/kcadm.sh update "clients/${CLIENT_B_INTERNAL_ID}/management/permissions" -r "${REALM_NAME}" -s enabled=true >/dev/null
 

@@ -6,12 +6,13 @@ Usage:
 
 from __future__ import annotations
 
-import base64
 import json
 import os
 import sys
 import urllib.parse
 import urllib.request
+
+from token_tools import decode_jwt_payload
 
 KEYCLOAK_BASE_URL = os.getenv("KEYCLOAK_BASE_URL", "http://localhost:8080")
 REALM = os.getenv("KEYCLOAK_REALM", "demo")
@@ -19,15 +20,6 @@ CLIENT_ID = os.getenv("OIDC_CLIENT_ID", "demo-client-a")
 CLIENT_SECRET = os.getenv("OIDC_CLIENT_SECRET", "demo-client-a-secret")
 USERNAME = os.getenv("DEMO_USER_USERNAME", "demo-user")
 PASSWORD = os.getenv("DEMO_USER_PASSWORD", "demo-user-password")
-
-
-def decode_payload(jwt_token: str) -> dict:
-    try:
-        payload = jwt_token.split(".")[1]
-        payload += "=" * (-len(payload) % 4)
-        return json.loads(base64.urlsafe_b64decode(payload).decode("utf-8"))
-    except Exception as exc:  # noqa: BLE001
-        return {"error": f"failed to decode payload: {exc}"}
 
 
 def main() -> int:
@@ -39,6 +31,7 @@ def main() -> int:
             "client_secret": CLIENT_SECRET,
             "username": USERNAME,
             "password": PASSWORD,
+            "scope": "openid profile",
         }
     ).encode("utf-8")
 
@@ -60,7 +53,7 @@ def main() -> int:
 
     if access_token:
         print("\n=== decoded access_token payload ===")
-        print(json.dumps(decode_payload(access_token), ensure_ascii=False, indent=2))
+        print(json.dumps(decode_jwt_payload(access_token), ensure_ascii=False, indent=2))
 
     return 0
 

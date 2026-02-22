@@ -148,3 +148,10 @@ python minimal_access_token.py
 
 - `grant_type=password` で `demo-client-a` + `demo-user` のアクセストークン取得
 - 取得した `access_token` の JWT payload 表示
+
+
+## CLI中心の検証
+
+- 手順詳細: `docs/flows.md`
+- ワンコマンド検証: `bash scripts/verify_flow.sh`
+- JWTデコード/検証: `python token_tools.py --token <JWT> --expected-aud <aud>`
