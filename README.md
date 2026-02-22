@@ -19,7 +19,7 @@ cp .env.example .env
 2. コンテナ起動（Keycloak + 初期化スクリプト）
 
 ```bash
-docker compose up -d
+docker compose up -d --build
 ```
 
 > TokenExchange を GUI/API の両方で安定して扱うため、Keycloak `24.0.5` を `--features=token-exchange,admin-fine-grained-authz` 付きで起動しています。
