@@ -22,7 +22,7 @@ cp .env.example .env
 docker compose up -d --build
 ```
 
-> TokenExchange を使うため、Keycloak は `--features=token-exchange` 付きで起動されます。
+> TokenExchange を GUI/API の両方で安定して扱うため、Keycloak `24.0.5` を `--features=token-exchange,admin-fine-grained-authz` 付きで起動しています。
 
 > 以前の設定が残っているとクライアント設定が古いままになるため、必要に応じて `docker compose down -v` 後に再起動してください。
 

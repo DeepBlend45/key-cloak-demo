@@ -1,11 +1,8 @@
 services:
   keycloak:
-    build:
-      context: .
-      dockerfile: Dockerfile.keycloak
-    image: keycloak-demo:26.1-curl
+    image: quay.io/keycloak/keycloak:24.0.5
     container_name: keycloak
-    command: start-dev --features=token-exchange
+    command: start-dev --features=token-exchange,admin-fine-grained-authz
     environment:
       KEYCLOAK_ADMIN: ${KEYCLOAK_ADMIN:-admin}
       KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:-admin}
@@ -14,7 +11,7 @@ services:
     restart: unless-stopped
 
   keycloak-init:
-    image: quay.io/keycloak/keycloak:26.1
+    image: quay.io/keycloak/keycloak:24.0.5
     container_name: keycloak-init
     depends_on:
       - keycloak
