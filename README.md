@@ -22,6 +22,8 @@ cp .env.example .env
 docker compose up -d --build
 ```
 
+> TokenExchange を使うため、Keycloak は `--features=token-exchange` 付きで起動されます。
+
 > 以前の設定が残っているとクライアント設定が古いままになるため、必要に応じて `docker compose down -v` 後に再起動してください。
 
 3. Keycloak 管理画面にアクセス

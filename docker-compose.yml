@@ -5,7 +5,7 @@ services:
       dockerfile: Dockerfile.keycloak
     image: keycloak-demo:26.1-curl
     container_name: keycloak
-    command: start-dev
+    command: start-dev --features=token-exchange
     environment:
       KEYCLOAK_ADMIN: ${KEYCLOAK_ADMIN:-admin}
       KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:-admin}
