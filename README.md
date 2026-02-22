@@ -103,3 +103,34 @@ docker compose down
 - `auth_code_receiver.py` の Python 構文チェック（OK）
 - `demo-client-a` のブラウザログイン設定（standard flow / redirect URI / web origins）が init スクリプト内で有効化されていることを確認
 - Keycloak 初期待機を `kcadm.sh` リトライ方式に変更し、`curl` 非依存で起動可能なことを確認
+
+
+## トラブルシューティング（同じエラーが続く場合）
+
+1. 既存データを消して再作成（最重要）
+
+```bash
+docker compose down -v
+docker compose up -d
+```
+
+2. Keycloak 側で demo-user のロック状態を手動クリア
+
+```bash
+docker compose exec keycloak /opt/keycloak/bin/kcadm.sh config credentials \
+  --server http://localhost:8080 --realm master --user admin --password admin
+
+docker compose exec keycloak /opt/keycloak/bin/kcadm.sh get users -r demo -q username=demo-user --fields id
+
+# 取得したidを<USER_ID>に入れる
+docker compose exec keycloak /opt/keycloak/bin/kcadm.sh delete \
+  attack-detection/brute-force/users/<USER_ID> -r demo
+```
+
+3. クライアントAのリダイレクト設定確認（localhost/127.0.0.1 の両方）
+
+```bash
+docker compose exec keycloak /opt/keycloak/bin/kcadm.sh get clients -r demo -q clientId=demo-client-a
+```
+
+4. ブラウザのシークレットウィンドウで再試行（古いCookie回避）

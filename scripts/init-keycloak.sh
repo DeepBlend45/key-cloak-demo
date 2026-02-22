@@ -44,6 +44,9 @@ USER_ID=$(/opt/keycloak/bin/kcadm.sh get users -r "${REALM_NAME}" -q username="$
 /opt/keycloak/bin/kcadm.sh set-password -r "${REALM_NAME}" --userid "${USER_ID}" --new-password "${DEMO_USER_PASSWORD}" --temporary=false
 /opt/keycloak/bin/kcadm.sh add-roles -r "${REALM_NAME}" --uusername "${DEMO_USER_USERNAME}" --rolename user
 
+# Clear possible temporary lock/throttle state for demo user if present.
+/opt/keycloak/bin/kcadm.sh delete "attack-detection/brute-force/users/${USER_ID}" -r "${REALM_NAME}" >/dev/null 2>&1 || true
+
 if ! /opt/keycloak/bin/kcadm.sh get clients -r "${REALM_NAME}" -q clientId="${CLIENT_A_ID}" --fields id | grep -q '"id"'; then
   echo "Creating client A (${CLIENT_A_ID})"
   /opt/keycloak/bin/kcadm.sh create clients -r "${REALM_NAME}" \
@@ -122,6 +125,7 @@ fi
 cat <<EOF
 
 Keycloak demo setup complete.
+Demo user lock state cleared (best effort).
 
 Demo credentials:
 - Realm: ${REALM_NAME}
