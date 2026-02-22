@@ -1,11 +1,32 @@
 services:
   keycloak:
-    image: quay.io/keycloak/keycloak:26.1
+    image: quay.io/keycloak/keycloak:24.0.5
     container_name: keycloak
-    command: start-dev
+    command: start-dev --features=token-exchange,admin-fine-grained-authz
     environment:
       KEYCLOAK_ADMIN: ${KEYCLOAK_ADMIN:-admin}
       KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:-admin}
     ports:
       - "8080:8080"
     restart: unless-stopped
+
+  keycloak-init:
+    image: quay.io/keycloak/keycloak:24.0.5
+    container_name: keycloak-init
+    depends_on:
+      - keycloak
+    environment:
+      KEYCLOAK_URL: http://keycloak:8080
+      KEYCLOAK_ADMIN: ${KEYCLOAK_ADMIN:-admin}
+      KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:-admin}
+      REALM_NAME: demo
+      DEMO_USER_USERNAME: demo-user
+      DEMO_USER_PASSWORD: demo-user-password
+      CLIENT_A_ID: demo-client-a
+      CLIENT_A_SECRET: demo-client-a-secret
+      CLIENT_B_ID: demo-client-b
+      CLIENT_B_SECRET: demo-client-b-secret
+    volumes:
+      - ./scripts/init-keycloak.sh:/opt/keycloak/data/import/init-keycloak.sh:ro
+    entrypoint: ["/bin/bash", "/opt/keycloak/data/import/init-keycloak.sh"]
+    restart: "no"
