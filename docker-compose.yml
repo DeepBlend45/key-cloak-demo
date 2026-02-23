@@ -1,34 +1,51 @@
 services:
   keycloak:
-    image: quay.io/keycloak/keycloak:24.0.5
+    image: quay.io/keycloak/keycloak:26.5.4
     container_name: keycloak
-    command: start-dev --features=token-exchange,admin-fine-grained-authz
+    command:
+      - start-dev
+      # 26系は V2 Token Exchange はデフォルト有効なので features 指定は基本不要
     environment:
-      KEYCLOAK_ADMIN: ${KEYCLOAK_ADMIN:-admin}
-      KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:-admin}
+      KC_BOOTSTRAP_ADMIN_USERNAME: ${KC_BOOTSTRAP_ADMIN_USERNAME:-admin}
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KC_BOOTSTRAP_ADMIN_PASSWORD:-admin}
+
+
+      # readiness
+      KC_HEALTH_ENABLED: "true"
     ports:
       - "8080:8080"
+      - "9000:9000"
     restart: unless-stopped
+    # healthcheck:
+    #   test: ["CMD", "sh", "-lc", "curl -fsS http://localhost:9000/health/ready >/dev/null"]
+    #   interval: 5s
+    #   timeout: 3s
+    #   retries: 30
 
   keycloak-init:
-    image: quay.io/keycloak/keycloak:24.0.5
+    image: quay.io/keycloak/keycloak:26.5.4
     container_name: keycloak-init
     depends_on:
       - keycloak
+        # condition: service_healthy
     environment:
       KEYCLOAK_URL: http://keycloak:8080
-      KEYCLOAK_ADMIN: ${KEYCLOAK_ADMIN:-admin}
-      KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:-admin}
+      KEYCLOAK_ADMIN: ${KC_BOOTSTRAP_ADMIN_USERNAME:-admin}
+      KEYCLOAK_ADMIN_PASSWORD: ${KC_BOOTSTRAP_ADMIN_PASSWORD:-admin}
+
       REALM_NAME: demo
       DEMO_USER_USERNAME: demo-user
       DEMO_USER_PASSWORD: demo-user-password
+
       USER_CLIENT_ID: demo-user-client
       USER_CLIENT_SECRET: demo-user-client-secret
+
       CLIENT_A_ID: demo-client-a
       CLIENT_A_SECRET: demo-client-a-secret
       CLIENT_B_ID: demo-client-b
       CLIENT_B_SECRET: demo-client-b-secret
+
     volumes:
-      - ./scripts/init-keycloak.sh:/opt/keycloak/data/import/init-keycloak.sh:ro
-    entrypoint: ["/bin/bash", "/opt/keycloak/data/import/init-keycloak.sh"]
+      - ./scripts/init-keycloak.sh:/opt/init-keycloak.sh:ro
+    entrypoint: ["/bin/bash", "/opt/init-keycloak.sh"]
     restart: "no"

@@ -154,6 +154,7 @@ def main() -> int:
         "client_id": CLIENT_A_ID,
         "client_secret": CLIENT_A_SECRET,
         "subject_token": user_access_token,
+        "subject_token_type": "urn:ietf:params:oauth:token-type:access_token",
         "requested_token_type": "urn:ietf:params:oauth:token-type:access_token",
         "audience": AUDIENCE_CLIENT_B,
     }
@@ -205,3 +206,6 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
+
+

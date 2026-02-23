@@ -1,104 +1,87 @@
 #!/usr/bin/env bash
 set -euo pipefail
-IFS=$'\n\t'  # 安全のため: 空白/改行を含む値でも壊れにくくする
+IFS=$'\n\t'
 
 # =========================
 # 0) 変数（環境変数で上書き可能）
 # =========================
-KEYCLOAK_URL="${KEYCLOAK_URL:-http://keycloak:8080}"  # Keycloak 管理APIのURL（コンテナ内から見えるURL想定）
-ADMIN_USER="${KEYCLOAK_ADMIN:-admin}"                 # Keycloak 管理者ユーザ
-ADMIN_PASSWORD="${KEYCLOAK_ADMIN_PASSWORD:-admin}"    # Keycloak 管理者パスワード
-REALM_NAME="${REALM_NAME:-demo}"                      # 作成/設定対象のRealm
+KEYCLOAK_URL="${KEYCLOAK_URL:-http://keycloak:8080}"
+ADMIN_USER="${KEYCLOAK_ADMIN:-admin}"
+ADMIN_PASSWORD="${KEYCLOAK_ADMIN_PASSWORD:-admin}"
+REALM_NAME="${REALM_NAME:-demo}"
 
-DEMO_USER_USERNAME="${DEMO_USER_USERNAME:-demo-user}"           # デモ用のユーザ名
-DEMO_USER_PASSWORD="${DEMO_USER_PASSWORD:-demo-user-password}"  # デモ用のパスワード
+DEMO_USER_USERNAME="${DEMO_USER_USERNAME:-demo-user}"
+DEMO_USER_PASSWORD="${DEMO_USER_PASSWORD:-demo-user-password}"
 
-USER_CLIENT_ID="${USER_CLIENT_ID:-demo-user-client}"  # ROPC(password grant)でユーザトークンを取るクライアント
+USER_CLIENT_ID="${USER_CLIENT_ID:-demo-user-client}"
 USER_CLIENT_SECRET="${USER_CLIENT_SECRET:-demo-user-client-secret}"
-CLIENT_A_ID="${CLIENT_A_ID:-demo-client-a}"            # トークン交換（Token Exchange）を実行するクライアント（=主体）
+
+CLIENT_A_ID="${CLIENT_A_ID:-demo-client-a}"
 CLIENT_A_SECRET="${CLIENT_A_SECRET:-demo-client-a-secret}"
-CLIENT_B_ID="${CLIENT_B_ID:-demo-client-b}"            # トークン交換の対象（audience）クライアント
+
+CLIENT_B_ID="${CLIENT_B_ID:-demo-client-b}"
 CLIENT_B_SECRET="${CLIENT_B_SECRET:-demo-client-b-secret}"
 
+# Standard Token Exchange v2 用
+B_CLIENT_ROLE="${B_CLIENT_ROLE:-invoke}"         # demo-client-b の client role
+B_CLIENT_SCOPE="${B_CLIENT_SCOPE:-scope-b}"      # demo-client-a に割り当てる client scope
+
+KC=/opt/keycloak/bin/kcadm.sh
+
 # =========================
-# 1) Keycloak 管理APIへログイン（起動待ち）
+# 1) Admin API login（起動待ち）
 # =========================
 echo "Waiting for Keycloak admin API at ${KEYCLOAK_URL} ..."
-until /opt/keycloak/bin/kcadm.sh config credentials \
-  --server "${KEYCLOAK_URL}" --realm master --user "${ADMIN_USER}" --password "${ADMIN_PASSWORD}" >/dev/null 2>&1; do
+until ${KC} config credentials \
+  --server "${KEYCLOAK_URL}" --realm master \
+  --user "${ADMIN_USER}" --password "${ADMIN_PASSWORD}" >/dev/null 2>&1; do
   sleep 2
 done
 echo "Logged in to admin API"
 
 # =========================
-# 2) Realm を作成（なければ）＋最低限の安定設定
+# 2) Realm 作成（なければ）
 # =========================
-if ! /opt/keycloak/bin/kcadm.sh get "realms/${REALM_NAME}" >/dev/null 2>&1; then
+if ! ${KC} get "realms/${REALM_NAME}" >/dev/null 2>&1; then
   echo "Creating realm ${REALM_NAME}"
-  /opt/keycloak/bin/kcadm.sh create realms \
+  ${KC} create realms \
     -s realm="${REALM_NAME}" \
     -s enabled=true \
-    -s bruteForceProtected=false
+    -s bruteForceProtected=false >/dev/null
 fi
 
-echo "Ensuring realm settings for demo login stability"
-# brute force 保護を切って「デモでロックして入れない」を回避（本番では推奨しない）
-/opt/keycloak/bin/kcadm.sh update "realms/${REALM_NAME}" \
+# デモ安定化（本番では推奨しない）
+${KC} update "realms/${REALM_NAME}" \
   -s enabled=true \
   -s bruteForceProtected=false >/dev/null
 
 # =========================
-# 3) Realm ロール user を用意
+# 3) Demo user 作成（なければ）＋パスワード設定
 # =========================
-if ! /opt/keycloak/bin/kcadm.sh get "roles/user" -r "${REALM_NAME}" >/dev/null 2>&1; then
-  echo "Creating realm role: user"
-  /opt/keycloak/bin/kcadm.sh create roles -r "${REALM_NAME}" \
-    -s name=user \
-    -s description='Demo user role'
-fi
-
-# =========================
-# 4) デモユーザ作成（なければ）＋必須属性を“毎回”収束
-# =========================
-if ! /opt/keycloak/bin/kcadm.sh get users -r "${REALM_NAME}" -q username="${DEMO_USER_USERNAME}" --fields id | grep -q '"id"'; then
+if ! ${KC} get users -r "${REALM_NAME}" -q username="${DEMO_USER_USERNAME}" --fields id | grep -q '"id"'; then
   echo "Creating demo user ${DEMO_USER_USERNAME}"
-  /opt/keycloak/bin/kcadm.sh create users -r "${REALM_NAME}" \
+  ${KC} create users -r "${REALM_NAME}" \
     -s username="${DEMO_USER_USERNAME}" \
     -s enabled=true \
     -s email="${DEMO_USER_USERNAME}@example.local" \
     -s emailVerified=true \
     -s firstName="Demo" \
-    -s lastName="User"
+    -s lastName="User" >/dev/null
 fi
 
-USER_ID=$(/opt/keycloak/bin/kcadm.sh get users -r "${REALM_NAME}" -q username="${DEMO_USER_USERNAME}" --fields id --format csv --noquotes | tail -n1)
+USER_ID=$(${KC} get users -r "${REALM_NAME}" -q username="${DEMO_USER_USERNAME}" --fields id --format csv --noquotes | tail -n1)
 
-echo "Ensuring demo user attributes are fully set up (idempotent)"
-/opt/keycloak/bin/kcadm.sh update "users/${USER_ID}" -r "${REALM_NAME}" \
-  -s enabled=true \
-  -s email="${DEMO_USER_USERNAME}@example.local" \
-  -s emailVerified=true \
-  -s firstName="Demo" \
-  -s lastName="User" \
-  -s "requiredActions=[]" >/dev/null
-
-/opt/keycloak/bin/kcadm.sh set-password -r "${REALM_NAME}" \
+${KC} set-password -r "${REALM_NAME}" \
   --userid "${USER_ID}" \
   --new-password "${DEMO_USER_PASSWORD}" \
-  --temporary=false
-
-/opt/keycloak/bin/kcadm.sh add-roles -r "${REALM_NAME}" \
-  --uusername "${DEMO_USER_USERNAME}" \
-  --rolename user
-
-/opt/keycloak/bin/kcadm.sh delete "attack-detection/brute-force/users/${USER_ID}" -r "${REALM_NAME}" >/dev/null 2>&1 || true
+  --temporary=false >/dev/null
 
 # =========================
-# 5) user client（ROPC用クライアント）
+# 4) USER_CLIENT（password grant 用）
 # =========================
-if ! /opt/keycloak/bin/kcadm.sh get clients -r "${REALM_NAME}" -q clientId="${USER_CLIENT_ID}" --fields id | grep -q '"id"'; then
+if ! ${KC} get clients -r "${REALM_NAME}" -q clientId="${USER_CLIENT_ID}" --fields id | grep -q '"id"'; then
   echo "Creating user client (${USER_CLIENT_ID})"
-  /opt/keycloak/bin/kcadm.sh create clients -r "${REALM_NAME}" \
+  ${KC} create clients -r "${REALM_NAME}" \
     -s clientId="${USER_CLIENT_ID}" \
     -s enabled=true \
     -s protocol=openid-connect \
@@ -106,38 +89,17 @@ if ! /opt/keycloak/bin/kcadm.sh get clients -r "${REALM_NAME}" -q clientId="${US
     -s secret="${USER_CLIENT_SECRET}" \
     -s directAccessGrantsEnabled=true \
     -s standardFlowEnabled=false \
-    -s serviceAccountsEnabled=false
+    -s serviceAccountsEnabled=false >/dev/null
 fi
 
-USER_CLIENT_INTERNAL_ID=$(/opt/keycloak/bin/kcadm.sh get clients -r "${REALM_NAME}" -q clientId="${USER_CLIENT_ID}" --fields id --format csv --noquotes | tail -n1)
-
-echo "Ensuring user client settings (idempotent)"
-/opt/keycloak/bin/kcadm.sh update "clients/${USER_CLIENT_INTERNAL_ID}" -r "${REALM_NAME}" \
-  -s enabled=true \
-  -s protocol=openid-connect \
-  -s publicClient=false \
-  -s secret="${USER_CLIENT_SECRET}" \
-  -s directAccessGrantsEnabled=true \
-  -s standardFlowEnabled=false \
-  -s serviceAccountsEnabled=false >/dev/null
-
-# user client のアクセストークンに audience=clientA を含める（Token Exchange 前段）
-if ! /opt/keycloak/bin/kcadm.sh get "clients/${USER_CLIENT_INTERNAL_ID}/protocol-mappers/models" -r "${REALM_NAME}" | grep -q 'audience-client-a-on-user-client'; then
-  /opt/keycloak/bin/kcadm.sh create "clients/${USER_CLIENT_INTERNAL_ID}/protocol-mappers/models" -r "${REALM_NAME}" \
-    -s name='audience-client-a-on-user-client' \
-    -s protocol='openid-connect' \
-    -s protocolMapper='oidc-audience-mapper' \
-    -s 'config."included.client.audience"'="${CLIENT_A_ID}" \
-    -s 'config."id.token.claim"'='false' \
-    -s 'config."access.token.claim"'='true' >/dev/null
-fi
+USER_CLIENT_INTERNAL_ID=$(${KC} get clients -r "${REALM_NAME}" -q clientId="${USER_CLIENT_ID}" --fields id --format csv --noquotes | tail -n1)
 
 # =========================
-# 6) client A
+# 5) CLIENT_A（requester）
 # =========================
-if ! /opt/keycloak/bin/kcadm.sh get clients -r "${REALM_NAME}" -q clientId="${CLIENT_A_ID}" --fields id | grep -q '"id"'; then
+if ! ${KC} get clients -r "${REALM_NAME}" -q clientId="${CLIENT_A_ID}" --fields id | grep -q '"id"'; then
   echo "Creating client A (${CLIENT_A_ID})"
-  /opt/keycloak/bin/kcadm.sh create clients -r "${REALM_NAME}" \
+  ${KC} create clients -r "${REALM_NAME}" \
     -s clientId="${CLIENT_A_ID}" \
     -s enabled=true \
     -s protocol=openid-connect \
@@ -149,31 +111,24 @@ if ! /opt/keycloak/bin/kcadm.sh get clients -r "${REALM_NAME}" -q clientId="${CL
     -s 'redirectUris=["http://localhost:9000/*","http://127.0.0.1:9000/*"]' \
     -s 'webOrigins=["http://localhost:9000","http://127.0.0.1:9000"]' \
     -s rootUrl="http://localhost:9000" \
-    -s baseUrl="http://localhost:9000"
+    -s baseUrl="http://localhost:9000" >/dev/null
 fi
 
-CLIENT_A_INTERNAL_ID=$(/opt/keycloak/bin/kcadm.sh get clients -r "${REALM_NAME}" -q clientId="${CLIENT_A_ID}" --fields id --format csv --noquotes | tail -n1)
+CLIENT_A_INTERNAL_ID=$(${KC} get clients -r "${REALM_NAME}" -q clientId="${CLIENT_A_ID}" --fields id --format csv --noquotes | tail -n1)
 
-echo "Ensuring client A supports browser login flow"
-/opt/keycloak/bin/kcadm.sh update "clients/${CLIENT_A_INTERNAL_ID}" -r "${REALM_NAME}" \
+# Standard Token Exchange v2 を requester に有効化（必須）
+${KC} update "clients/${CLIENT_A_INTERNAL_ID}" -r "${REALM_NAME}" \
+  -s 'attributes."standard.token.exchange.enabled"'="true" \
   -s enabled=true \
-  -s protocol=openid-connect \
-  -s publicClient=false \
   -s secret="${CLIENT_A_SECRET}" \
-  -s directAccessGrantsEnabled=true \
-  -s standardFlowEnabled=true \
-  -s serviceAccountsEnabled=true \
-  -s 'redirectUris=["http://localhost:9000/*","http://127.0.0.1:9000/*"]' \
-  -s 'webOrigins=["http://localhost:9000","http://127.0.0.1:9000"]' \
-  -s rootUrl="http://localhost:9000" \
-  -s baseUrl="http://localhost:9000" >/dev/null
+  >/dev/null
 
 # =========================
-# 7) client B（audience）
+# 6) CLIENT_B（target / audience）
 # =========================
-if ! /opt/keycloak/bin/kcadm.sh get clients -r "${REALM_NAME}" -q clientId="${CLIENT_B_ID}" --fields id | grep -q '"id"'; then
+if ! ${KC} get clients -r "${REALM_NAME}" -q clientId="${CLIENT_B_ID}" --fields id | grep -q '"id"'; then
   echo "Creating client B (${CLIENT_B_ID})"
-  /opt/keycloak/bin/kcadm.sh create clients -r "${REALM_NAME}" \
+  ${KC} create clients -r "${REALM_NAME}" \
     -s clientId="${CLIENT_B_ID}" \
     -s enabled=true \
     -s protocol=openid-connect \
@@ -181,28 +136,75 @@ if ! /opt/keycloak/bin/kcadm.sh get clients -r "${REALM_NAME}" -q clientId="${CL
     -s secret="${CLIENT_B_SECRET}" \
     -s directAccessGrantsEnabled=false \
     -s standardFlowEnabled=false \
-    -s serviceAccountsEnabled=false
+    -s serviceAccountsEnabled=false >/dev/null
 fi
 
-CLIENT_B_INTERNAL_ID=$(/opt/keycloak/bin/kcadm.sh get clients -r "${REALM_NAME}" -q clientId="${CLIENT_B_ID}" --fields id --format csv --noquotes | tail -n1)
+CLIENT_B_INTERNAL_ID=$(${KC} get clients -r "${REALM_NAME}" -q clientId="${CLIENT_B_ID}" --fields id --format csv --noquotes | tail -n1)
 
 # =========================
-# 8) デモ用ロール（ダウンスコープ例）
+# 7) demo-client-b に client role を作る（audience 可能化の核）
 # =========================
-echo "Ensuring demo roles for downscope"
-/opt/keycloak/bin/kcadm.sh create roles -r "${REALM_NAME}" -s name='role:user:read' >/dev/null 2>&1 || true
-/opt/keycloak/bin/kcadm.sh create roles -r "${REALM_NAME}" -s name='role:user:write' >/dev/null 2>&1 || true
-/opt/keycloak/bin/kcadm.sh create roles -r "${REALM_NAME}" -s name='role:b:invoke' >/dev/null 2>&1 || true
+# クライアントロールは /clients/{id}/roles で管理
+if ! ${KC} get "clients/${CLIENT_B_INTERNAL_ID}/roles/${B_CLIENT_ROLE}" -r "${REALM_NAME}" >/dev/null 2>&1; then
+  echo "Creating client-b role: ${CLIENT_B_ID}.${B_CLIENT_ROLE}"
+  ${KC} create "clients/${CLIENT_B_INTERNAL_ID}/roles" -r "${REALM_NAME}" \
+    -s name="${B_CLIENT_ROLE}" \
+    -s description="Role for token exchange audience=${CLIENT_B_ID}" >/dev/null
+fi
 
-/opt/keycloak/bin/kcadm.sh add-roles -r "${REALM_NAME}" --uusername "${DEMO_USER_USERNAME}" --rolename 'role:user:read' >/dev/null 2>&1 || true
-/opt/keycloak/bin/kcadm.sh add-roles -r "${REALM_NAME}" --uusername "${DEMO_USER_USERNAME}" --rolename 'role:user:write' >/dev/null 2>&1 || true
+# =========================
+# 8) demo-user に client-b role を付与（audience が「利用可能」になる条件）
+# =========================
+# user に client role を付ける（realm role ではない）
+echo "Granting client-b role to demo user"
+${KC} add-roles -r "${REALM_NAME}" \
+  --uusername "${DEMO_USER_USERNAME}" \
+  --cclientid "${CLIENT_B_ID}" \
+  --rolename "${B_CLIENT_ROLE}" >/dev/null 2>&1 || true
 
 # =========================
-# 9) client A のトークンに audience=clientA を含める（デモ用）
+# 9) client scope（scope-b）を作り、そこに client-b role を含める
+#    -> demo-client-a にこの scope を割り当てると、token exchange 時に aud に client-b が出せる
 # =========================
-if ! /opt/keycloak/bin/kcadm.sh get "clients/${CLIENT_A_INTERNAL_ID}/protocol-mappers/models" -r "${REALM_NAME}" | grep -q 'audience-client-a'; then
-  /opt/keycloak/bin/kcadm.sh create "clients/${CLIENT_A_INTERNAL_ID}/protocol-mappers/models" -r "${REALM_NAME}" \
-    -s name='audience-client-a' \
+# 9-1) client scope 作成
+if ! ${KC} get client-scopes -r "${REALM_NAME}" -q name="${B_CLIENT_SCOPE}" --fields id | grep -q '"id"'; then
+  echo "Creating client scope: ${B_CLIENT_SCOPE}"
+  ${KC} create client-scopes -r "${REALM_NAME}" \
+    -s name="${B_CLIENT_SCOPE}" \
+    -s protocol="openid-connect" \
+    -s description="Scope enabling audience ${CLIENT_B_ID} via client role mapping" >/dev/null
+fi
+
+SCOPE_B_ID=$(${KC} get client-scopes -r "${REALM_NAME}" -q name="${B_CLIENT_SCOPE}" --fields id --format csv --noquotes | tail -n1)
+
+# 9-2) client scope に role-scope-mapping を追加（client-b の role を scope に含める）
+# まず role 表現(JSON)を取る
+ROLE_JSON=$(${KC} get "clients/${CLIENT_B_INTERNAL_ID}/roles/${B_CLIENT_ROLE}" -r "${REALM_NAME}" --format json)
+
+# すでに付いているか確認（雑に name で判定）
+if ! ${KC} get "client-scopes/${SCOPE_B_ID}/scope-mappings/clients/${CLIENT_B_INTERNAL_ID}" -r "${REALM_NAME}" 2>/dev/null | grep -q "\"name\"[[:space:]]*:[[:space:]]*\"${B_CLIENT_ROLE}\""; then
+  echo "Adding role-scope-mapping: scope ${B_CLIENT_SCOPE} includes ${CLIENT_B_ID}.${B_CLIENT_ROLE}"
+  # role を配列で POST する必要がある
+  printf '[%s]\n' "${ROLE_JSON}" > /tmp/role-b.json
+  ${KC} create "client-scopes/${SCOPE_B_ID}/scope-mappings/clients/${CLIENT_B_INTERNAL_ID}" -r "${REALM_NAME}" \
+    -f /tmp/role-b.json >/dev/null
+fi
+
+# 9-3) demo-client-a に scope-b を default client scope として割当
+# （optional にすると token exchange リクエストに scope=scope-b が必要になる）
+if ! ${KC} get "clients/${CLIENT_A_INTERNAL_ID}/default-client-scopes" -r "${REALM_NAME}" 2>/dev/null | grep -q "\"name\"[[:space:]]*:[[:space:]]*\"${B_CLIENT_SCOPE}\""; then
+  echo "Attaching default client scope to client-a: ${B_CLIENT_SCOPE}"
+  ${KC} update "clients/${CLIENT_A_INTERNAL_ID}/default-client-scopes/${SCOPE_B_ID}" -r "${REALM_NAME}" >/dev/null
+fi
+
+# =========================
+# 10) ユーザトークンに aud=client-a を入れる（initial token -> requester を成立させる）
+#     これはあなたの元スクリプト通り audience mapper を user-client に付ける
+# =========================
+if ! ${KC} get "clients/${USER_CLIENT_INTERNAL_ID}/protocol-mappers/models" -r "${REALM_NAME}" | grep -q 'audience-client-a-on-user-client'; then
+  echo "Adding audience mapper to user-client to include aud=${CLIENT_A_ID}"
+  ${KC} create "clients/${USER_CLIENT_INTERNAL_ID}/protocol-mappers/models" -r "${REALM_NAME}" \
+    -s name='audience-client-a-on-user-client' \
     -s protocol='openid-connect' \
     -s protocolMapper='oidc-audience-mapper' \
     -s 'config."included.client.audience"'="${CLIENT_A_ID}" \
@@ -211,117 +213,45 @@ if ! /opt/keycloak/bin/kcadm.sh get "clients/${CLIENT_A_INTERNAL_ID}/protocol-ma
 fi
 
 # =========================
-# 10) Token Exchange allowlist: Client A -> audience Client B (realm-management)
-# =========================
-echo "Configuring Token Exchange allowlist (realm-management): ${CLIENT_A_ID} -> audience ${CLIENT_B_ID}"
-
-REALM_MGMT_INTERNAL_ID=$(
-  /opt/keycloak/bin/kcadm.sh get clients -r "${REALM_NAME}" -q clientId=realm-management \
-    --fields id --format csv --noquotes | tail -n1
-)
-if [ -z "${REALM_MGMT_INTERNAL_ID}" ]; then
-  echo "[ERROR] realm-management internal id not found" >&2
-  exit 1
-fi
-
-/opt/keycloak/bin/kcadm.sh update "clients/${CLIENT_B_INTERNAL_ID}/management/permissions" -r "${REALM_NAME}" \
-  -s enabled=true >/dev/null
-
-MGMT_PERMS_JSON=$(/opt/keycloak/bin/kcadm.sh get "clients/${CLIENT_B_INTERNAL_ID}/management/permissions" -r "${REALM_NAME}")
-TOKEN_EXCHANGE_PERMISSION_ID=$(echo "${MGMT_PERMS_JSON}" | sed -n 's/.*"token-exchange"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
-if [ -z "${TOKEN_EXCHANGE_PERMISSION_ID}" ]; then
-  echo "[ERROR] token-exchange permission id not found in management/permissions" >&2
-  echo "${MGMT_PERMS_JSON}" >&2
-  exit 1
-fi
-echo "token-exchange permission id: ${TOKEN_EXCHANGE_PERMISSION_ID}"
-
-cat > /tmp/rm-client-policy.json <<EOF
-{
-  "name": "client.policy.${CLIENT_A_ID}",
-  "description": "Allow ${CLIENT_A_ID} token exchange",
-  "type": "client",
-  "logic": "POSITIVE",
-  "decisionStrategy": "UNANIMOUS",
-  "clients": ["${CLIENT_A_ID}"]
-}
-EOF
-
-/opt/keycloak/bin/kcadm.sh create "clients/${REALM_MGMT_INTERNAL_ID}/authz/resource-server/policy/client" -r "${REALM_NAME}" \
-  -f /tmp/rm-client-policy.json >/dev/null 2>&1 || true
-
-POLICIES_JSON=$(/opt/keycloak/bin/kcadm.sh get "clients/${REALM_MGMT_INTERNAL_ID}/authz/resource-server/policy" -r "${REALM_NAME}" --format json)
-POLICY_UUID=$(
-  echo "${POLICIES_JSON}" \
-  | sed -n '
-      /"id"[[:space:]]*:[[:space:]]*"/{h;}
-      /"name"[[:space:]]*:[[:space:]]*"client.policy.'"${CLIENT_A_ID}"'"/{
-        g;
-        s/.*"id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p;
-        q;
-      }
-    '
-)
-if [ -z "${POLICY_UUID}" ]; then
-  echo "[ERROR] policy UUID not found for client.policy.${CLIENT_A_ID}" >&2
-  echo "${POLICIES_JSON}" | head -n 200 >&2
-  exit 1
-fi
-echo "policy uuid: ${POLICY_UUID}"
-
-PERM_JSON=$(/opt/keycloak/bin/kcadm.sh get "clients/${REALM_MGMT_INTERNAL_ID}/authz/resource-server/permission/scope/${TOKEN_EXCHANGE_PERMISSION_ID}" -r "${REALM_NAME}" --format json)
-PERM_NAME=$(echo "${PERM_JSON}" | sed -n 's/.*"name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
-if [ -z "${PERM_NAME}" ]; then
-  echo "[ERROR] permission name not found for token-exchange permission" >&2
-  echo "${PERM_JSON}" >&2
-  exit 1
-fi
-
-cat > /tmp/rm-perm-update.json <<EOF
-{
-  "id": "${TOKEN_EXCHANGE_PERMISSION_ID}",
-  "name": "${PERM_NAME}",
-  "type": "scope",
-  "logic": "POSITIVE",
-  "decisionStrategy": "UNANIMOUS",
-  "policies": ["${POLICY_UUID}"]
-}
-EOF
-
-/opt/keycloak/bin/kcadm.sh update "clients/${REALM_MGMT_INTERNAL_ID}/authz/resource-server/permission/scope/${TOKEN_EXCHANGE_PERMISSION_ID}" -r "${REALM_NAME}" \
-  -f /tmp/rm-perm-update.json >/dev/null
-
-echo "Token Exchange permission updated (realm-management): allow ${CLIENT_A_ID} -> audience ${CLIENT_B_ID}"
-
-# =========================
-# 11) 動作確認用の curl を表示
+# 11) 完了メッセージ（検証用 curl）
 # =========================
 cat <<EOF
 
-Keycloak demo setup complete.
-Demo user lock state cleared (best effort).
+Keycloak demo setup complete (Standard Token Exchange v2).
 
-Demo credentials:
-- Realm: ${REALM_NAME}
-- User: ${DEMO_USER_USERNAME} / ${DEMO_USER_PASSWORD}
-- User Client: ${USER_CLIENT_ID} / ${USER_CLIENT_SECRET}
-- Client A: ${CLIENT_A_ID} / ${CLIENT_A_SECRET}
-- Client B: ${CLIENT_B_ID} / ${CLIENT_B_SECRET}
+Realm: ${REALM_NAME}
+User:  ${DEMO_USER_USERNAME} / ${DEMO_USER_PASSWORD}
 
-User token (via user client, aud should include client A):
+Clients:
+- user-client (password grant): ${USER_CLIENT_ID}
+- requester (token exchange):    ${CLIENT_A_ID}
+- target (audience):             ${CLIENT_B_ID}
+
+Token Exchange v2 prerequisites created:
+- client-b role: ${CLIENT_B_ID}.${B_CLIENT_ROLE}
+- demo-user granted role: ${CLIENT_B_ID}.${B_CLIENT_ROLE}
+- client scope: ${B_CLIENT_SCOPE} includes ${CLIENT_B_ID}.${B_CLIENT_ROLE}
+- client-a has default scope: ${B_CLIENT_SCOPE}
+- client-a standard.token.exchange.enabled=true
+
+User token:
 curl -s -X POST "${KEYCLOAK_URL}/realms/${REALM_NAME}/protocol/openid-connect/token" \
+  -H "Content-Type: application/x-www-form-urlencoded" \
   -d "grant_type=password" \
   -d "client_id=${USER_CLIENT_ID}" \
   -d "client_secret=${USER_CLIENT_SECRET}" \
   -d "username=${DEMO_USER_USERNAME}" \
-  -d "password=${DEMO_USER_PASSWORD}"
+  -d "password=${DEMO_USER_PASSWORD}" \
+  -d "scope=profile email"
 
-Token exchange (A -> B):
+Token exchange (requester=client-a, audience=client-b):
 curl -s -X POST "${KEYCLOAK_URL}/realms/${REALM_NAME}/protocol/openid-connect/token" \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  -u "${CLIENT_A_ID}:${CLIENT_A_SECRET}" \
   -d "grant_type=urn:ietf:params:oauth:grant-type:token-exchange" \
-  -d "client_id=${CLIENT_A_ID}" \
-  -d "client_secret=${CLIENT_A_SECRET}" \
   -d "subject_token=<USER_ACCESS_TOKEN>" \
+  -d "subject_token_type=urn:ietf:params:oauth:token-type:access_token" \
   -d "requested_token_type=urn:ietf:params:oauth:token-type:access_token" \
   -d "audience=${CLIENT_B_ID}"
+
 EOF
