@@ -8,26 +8,17 @@ services:
     environment:
       KC_BOOTSTRAP_ADMIN_USERNAME: ${KC_BOOTSTRAP_ADMIN_USERNAME:-admin}
       KC_BOOTSTRAP_ADMIN_PASSWORD: ${KC_BOOTSTRAP_ADMIN_PASSWORD:-admin}
-
-
-      # readiness
       KC_HEALTH_ENABLED: "true"
     ports:
       - "8080:8080"
       - "9000:9000"
     restart: unless-stopped
-    # healthcheck:
-    #   test: ["CMD", "sh", "-lc", "curl -fsS http://localhost:9000/health/ready >/dev/null"]
-    #   interval: 5s
-    #   timeout: 3s
-    #   retries: 30
 
   keycloak-init:
     image: quay.io/keycloak/keycloak:26.5.4
     container_name: keycloak-init
     depends_on:
       - keycloak
-        # condition: service_healthy
     environment:
       KEYCLOAK_URL: http://keycloak:8080
       KEYCLOAK_ADMIN: ${KC_BOOTSTRAP_ADMIN_USERNAME:-admin}
