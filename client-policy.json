@@ -1,0 +1,1 @@
+{"name": "client.policy.demo-client-a", "description": "Allow demo-client-a token exchange", "type": "client", "logic": "POSITIVE", "decisionStrategy": "UNANIMOUS", "clients": ["demo-client-a"]}

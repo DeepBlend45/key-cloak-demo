@@ -1,0 +1,1 @@
+{"id": "f255d04c-d483-4284-819e-2ba700372ed6", "name": "token-exchange.permission.client.5f814cee-86e1-4023-b3ae-e34b70c71d9b", "type": "scope", "logic": "POSITIVE", "decisionStrategy": "UNANIMOUS", "policies": ["7c79d250-5771-4597-9aab-dfc00736f062"]}
