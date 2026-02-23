@@ -2,10 +2,30 @@
 set -euo pipefail
 IFS=$'\n\t'
 
+# ============================================================
+# 목적:
+#   Keycloak (Standard Token Exchange v2) 用のデモ環境を自動構築する。
+#
+# 仕様（あなたの要件）:
+#   - initial   : demo-user-client（password grantでユーザトークン取得）
+#   - requester : demo-client-a    （Token Exchange を要求するクライアント）
+#   - target    : demo-client-b    （audience の宛先。aud は固定にしたい）
+#   - 拡張要件  : Token Exchange 時に付与する scope を2種類に分け、
+#                requester(client-a) が scope を動的に選べるようにする。
+#
+# 実現方法（Keycloak v2 の考え方）:
+#   - audience は「追加」ではなく「利用可能候補からのフィルタ」。
+#     -> 事前に「client-b が audience 候補として成立する」状態を作る必要がある。
+#   - そのために client-b の client role を作り、ユーザに付与し、
+#     さらに client scope に role-scope-mapping を入れる。
+#   - 動的に切り替えたい2種類の scope は「Optional Client Scopes」として
+#     client-a に紐づけ、Token Exchange リクエストの scope=... で選ぶ。
+# ============================================================
+
 # =========================
 # 0) 変数（環境変数で上書き可能）
 # =========================
-KEYCLOAK_URL="${KEYCLOAK_URL:-http://keycloak:8080}"
+KEYCLOAK_URL="${KEYCLOAK_URL:-http://keycloak:8080}"  # 管理API（kcadm）から見えるURL
 ADMIN_USER="${KEYCLOAK_ADMIN:-admin}"
 ADMIN_PASSWORD="${KEYCLOAK_ADMIN_PASSWORD:-admin}"
 REALM_NAME="${REALM_NAME:-demo}"
@@ -13,23 +33,32 @@ REALM_NAME="${REALM_NAME:-demo}"
 DEMO_USER_USERNAME="${DEMO_USER_USERNAME:-demo-user}"
 DEMO_USER_PASSWORD="${DEMO_USER_PASSWORD:-demo-user-password}"
 
+# initial client（ユーザトークン取得用）
 USER_CLIENT_ID="${USER_CLIENT_ID:-demo-user-client}"
 USER_CLIENT_SECRET="${USER_CLIENT_SECRET:-demo-user-client-secret}"
 
+# requester（token exchange を要求するクライアント）
 CLIENT_A_ID="${CLIENT_A_ID:-demo-client-a}"
 CLIENT_A_SECRET="${CLIENT_A_SECRET:-demo-client-a-secret}"
 
+# target（audience の宛先クライアント）
 CLIENT_B_ID="${CLIENT_B_ID:-demo-client-b}"
 CLIENT_B_SECRET="${CLIENT_B_SECRET:-demo-client-b-secret}"
 
-# Standard Token Exchange v2 用
-B_CLIENT_ROLE="${B_CLIENT_ROLE:-invoke}"         # demo-client-b の client role
-B_CLIENT_SCOPE="${B_CLIENT_SCOPE:-scope-b}"      # demo-client-a に割り当てる client scope
+# --- 拡張: scope を2種類に分ける（basic / premium） ---
+# client-b 側の client roles（権限そのもの）
+B_ROLE_BASIC="${B_ROLE_BASIC:-invoke.basic}"
+B_ROLE_PREMIUM="${B_ROLE_PREMIUM:-invoke.premium}"
+
+# client-a から要求できる client scopes（トークンに載せる“パッケージ”）
+# ※これを token exchange リクエストの scope= で選ぶ
+SCOPE_B_BASIC="${SCOPE_B_BASIC:-scope-b-basic}"
+SCOPE_B_PREMIUM="${SCOPE_B_PREMIUM:-scope-b-premium}"
 
 KC=/opt/keycloak/bin/kcadm.sh
 
 # =========================
-# 1) Admin API login（起動待ち）
+# 1) Keycloak 管理APIへログイン（起動待ち）
 # =========================
 echo "Waiting for Keycloak admin API at ${KEYCLOAK_URL} ..."
 until ${KC} config credentials \
@@ -40,7 +69,7 @@ done
 echo "Logged in to admin API"
 
 # =========================
-# 2) Realm 作成（なければ）
+# 2) Realm を作成（なければ）＋最低限の安定設定
 # =========================
 if ! ${KC} get "realms/${REALM_NAME}" >/dev/null 2>&1; then
   echo "Creating realm ${REALM_NAME}"
@@ -56,7 +85,7 @@ ${KC} update "realms/${REALM_NAME}" \
   -s bruteForceProtected=false >/dev/null
 
 # =========================
-# 3) Demo user 作成（なければ）＋パスワード設定
+# 3) デモユーザ作成（なければ）＋必須属性を収束
 # =========================
 if ! ${KC} get users -r "${REALM_NAME}" -q username="${DEMO_USER_USERNAME}" --fields id | grep -q '"id"'; then
   echo "Creating demo user ${DEMO_USER_USERNAME}"
@@ -71,13 +100,21 @@ fi
 
 USER_ID=$(${KC} get users -r "${REALM_NAME}" -q username="${DEMO_USER_USERNAME}" --fields id --format csv --noquotes | tail -n1)
 
+${KC} update "users/${USER_ID}" -r "${REALM_NAME}" \
+  -s enabled=true \
+  -s email="${DEMO_USER_USERNAME}@example.local" \
+  -s emailVerified=true \
+  -s firstName="Demo" \
+  -s lastName="User" \
+  -s "requiredActions=[]" >/dev/null
+
 ${KC} set-password -r "${REALM_NAME}" \
   --userid "${USER_ID}" \
   --new-password "${DEMO_USER_PASSWORD}" \
   --temporary=false >/dev/null
 
 # =========================
-# 4) USER_CLIENT（password grant 用）
+# 4) user client（password grant 用 / initial token）
 # =========================
 if ! ${KC} get clients -r "${REALM_NAME}" -q clientId="${USER_CLIENT_ID}" --fields id | grep -q '"id"'; then
   echo "Creating user client (${USER_CLIENT_ID})"
@@ -94,8 +131,17 @@ fi
 
 USER_CLIENT_INTERNAL_ID=$(${KC} get clients -r "${REALM_NAME}" -q clientId="${USER_CLIENT_ID}" --fields id --format csv --noquotes | tail -n1)
 
+${KC} update "clients/${USER_CLIENT_INTERNAL_ID}" -r "${REALM_NAME}" \
+  -s enabled=true \
+  -s protocol=openid-connect \
+  -s publicClient=false \
+  -s secret="${USER_CLIENT_SECRET}" \
+  -s directAccessGrantsEnabled=true \
+  -s standardFlowEnabled=false \
+  -s serviceAccountsEnabled=false >/dev/null
+
 # =========================
-# 5) CLIENT_A（requester）
+# 5) client A（requester）
 # =========================
 if ! ${KC} get clients -r "${REALM_NAME}" -q clientId="${CLIENT_A_ID}" --fields id | grep -q '"id"'; then
   echo "Creating client A (${CLIENT_A_ID})"
@@ -116,15 +162,30 @@ fi
 
 CLIENT_A_INTERNAL_ID=$(${KC} get clients -r "${REALM_NAME}" -q clientId="${CLIENT_A_ID}" --fields id --format csv --noquotes | tail -n1)
 
-# Standard Token Exchange v2 を requester に有効化（必須）
 ${KC} update "clients/${CLIENT_A_INTERNAL_ID}" -r "${REALM_NAME}" \
-  -s 'attributes."standard.token.exchange.enabled"'="true" \
   -s enabled=true \
+  -s protocol=openid-connect \
+  -s publicClient=false \
   -s secret="${CLIENT_A_SECRET}" \
-  >/dev/null
+  -s directAccessGrantsEnabled=true \
+  -s standardFlowEnabled=true \
+  -s serviceAccountsEnabled=true \
+  -s 'redirectUris=["http://localhost:9000/*","http://127.0.0.1:9000/*"]' \
+  -s 'webOrigins=["http://localhost:9000","http://127.0.0.1:9000"]' \
+  -s rootUrl="http://localhost:9000" \
+  -s baseUrl="http://localhost:9000" >/dev/null
+
+# ------------------------------------------------------------
+# [追加] Standard Token Exchange v2 を requester(client-a) に有効化
+# 理由:
+#   v2 では RFC8693 grant を「そのクライアントが使ってよいか」を
+#   client-a の属性で制御する。
+# ------------------------------------------------------------
+${KC} update "clients/${CLIENT_A_INTERNAL_ID}" -r "${REALM_NAME}" \
+  -s 'attributes."standard.token.exchange.enabled"'="true" >/dev/null
 
 # =========================
-# 6) CLIENT_B（target / audience）
+# 6) client B（target / audience）
 # =========================
 if ! ${KC} get clients -r "${REALM_NAME}" -q clientId="${CLIENT_B_ID}" --fields id | grep -q '"id"'; then
   echo "Creating client B (${CLIENT_B_ID})"
@@ -142,65 +203,12 @@ fi
 CLIENT_B_INTERNAL_ID=$(${KC} get clients -r "${REALM_NAME}" -q clientId="${CLIENT_B_ID}" --fields id --format csv --noquotes | tail -n1)
 
 # =========================
-# 7) demo-client-b に client role を作る（audience 可能化の核）
+# 7) initial token に aud=client-a を入れる（user-client に audience mapper）
 # =========================
-# クライアントロールは /clients/{id}/roles で管理
-if ! ${KC} get "clients/${CLIENT_B_INTERNAL_ID}/roles/${B_CLIENT_ROLE}" -r "${REALM_NAME}" >/dev/null 2>&1; then
-  echo "Creating client-b role: ${CLIENT_B_ID}.${B_CLIENT_ROLE}"
-  ${KC} create "clients/${CLIENT_B_INTERNAL_ID}/roles" -r "${REALM_NAME}" \
-    -s name="${B_CLIENT_ROLE}" \
-    -s description="Role for token exchange audience=${CLIENT_B_ID}" >/dev/null
-fi
-
-# =========================
-# 8) demo-user に client-b role を付与（audience が「利用可能」になる条件）
-# =========================
-# user に client role を付ける（realm role ではない）
-echo "Granting client-b role to demo user"
-${KC} add-roles -r "${REALM_NAME}" \
-  --uusername "${DEMO_USER_USERNAME}" \
-  --cclientid "${CLIENT_B_ID}" \
-  --rolename "${B_CLIENT_ROLE}" >/dev/null 2>&1 || true
-
-# =========================
-# 9) client scope（scope-b）を作り、そこに client-b role を含める
-#    -> demo-client-a にこの scope を割り当てると、token exchange 時に aud に client-b が出せる
-# =========================
-# 9-1) client scope 作成
-if ! ${KC} get client-scopes -r "${REALM_NAME}" -q name="${B_CLIENT_SCOPE}" --fields id | grep -q '"id"'; then
-  echo "Creating client scope: ${B_CLIENT_SCOPE}"
-  ${KC} create client-scopes -r "${REALM_NAME}" \
-    -s name="${B_CLIENT_SCOPE}" \
-    -s protocol="openid-connect" \
-    -s description="Scope enabling audience ${CLIENT_B_ID} via client role mapping" >/dev/null
-fi
-
-SCOPE_B_ID=$(${KC} get client-scopes -r "${REALM_NAME}" -q name="${B_CLIENT_SCOPE}" --fields id --format csv --noquotes | tail -n1)
-
-# 9-2) client scope に role-scope-mapping を追加（client-b の role を scope に含める）
-# まず role 表現(JSON)を取る
-ROLE_JSON=$(${KC} get "clients/${CLIENT_B_INTERNAL_ID}/roles/${B_CLIENT_ROLE}" -r "${REALM_NAME}" --format json)
-
-# すでに付いているか確認（雑に name で判定）
-if ! ${KC} get "client-scopes/${SCOPE_B_ID}/scope-mappings/clients/${CLIENT_B_INTERNAL_ID}" -r "${REALM_NAME}" 2>/dev/null | grep -q "\"name\"[[:space:]]*:[[:space:]]*\"${B_CLIENT_ROLE}\""; then
-  echo "Adding role-scope-mapping: scope ${B_CLIENT_SCOPE} includes ${CLIENT_B_ID}.${B_CLIENT_ROLE}"
-  # role を配列で POST する必要がある
-  printf '[%s]\n' "${ROLE_JSON}" > /tmp/role-b.json
-  ${KC} create "client-scopes/${SCOPE_B_ID}/scope-mappings/clients/${CLIENT_B_INTERNAL_ID}" -r "${REALM_NAME}" \
-    -f /tmp/role-b.json >/dev/null
-fi
-
-# 9-3) demo-client-a に scope-b を default client scope として割当
-# （optional にすると token exchange リクエストに scope=scope-b が必要になる）
-if ! ${KC} get "clients/${CLIENT_A_INTERNAL_ID}/default-client-scopes" -r "${REALM_NAME}" 2>/dev/null | grep -q "\"name\"[[:space:]]*:[[:space:]]*\"${B_CLIENT_SCOPE}\""; then
-  echo "Attaching default client scope to client-a: ${B_CLIENT_SCOPE}"
-  ${KC} update "clients/${CLIENT_A_INTERNAL_ID}/default-client-scopes/${SCOPE_B_ID}" -r "${REALM_NAME}" >/dev/null
-fi
-
-# =========================
-# 10) ユーザトークンに aud=client-a を入れる（initial token -> requester を成立させる）
-#     これはあなたの元スクリプト通り audience mapper を user-client に付ける
-# =========================
+# ------------------------------------------------------------
+# [重要] v2 token exchange では、requester が関係者として扱われるために
+#        subject_token の aud に requester(client-a) が含まれる構成が安定。
+# ------------------------------------------------------------
 if ! ${KC} get "clients/${USER_CLIENT_INTERNAL_ID}/protocol-mappers/models" -r "${REALM_NAME}" | grep -q 'audience-client-a-on-user-client'; then
   echo "Adding audience mapper to user-client to include aud=${CLIENT_A_ID}"
   ${KC} create "clients/${USER_CLIENT_INTERNAL_ID}/protocol-mappers/models" -r "${REALM_NAME}" \
@@ -213,28 +221,141 @@ if ! ${KC} get "clients/${USER_CLIENT_INTERNAL_ID}/protocol-mappers/models" -r "
 fi
 
 # =========================
-# 11) 完了メッセージ（検証用 curl）
+# 8) [追加] client-b の client roles を2種類作る（basic / premium）
+# =========================
+# ------------------------------------------------------------
+# [追加] ここが「audience=client-b を“利用可能候補”にする」足場。
+#   - client-b に client role が存在し、ユーザがそれを持つことで
+#     「ユーザに client-b 向けの権限がある」という根拠ができる。
+#   - さらに scope mapping を通じて、token exchange 時に
+#     「その権限をトークンへ載せる」ことが可能になる。
+# ------------------------------------------------------------
+for R in "${B_ROLE_BASIC}" "${B_ROLE_PREMIUM}"; do
+  if ! ${KC} get "clients/${CLIENT_B_INTERNAL_ID}/roles/${R}" -r "${REALM_NAME}" >/dev/null 2>&1; then
+    echo "Creating client-b role: ${CLIENT_B_ID}.${R}"
+    ${KC} create "clients/${CLIENT_B_INTERNAL_ID}/roles" -r "${REALM_NAME}" \
+      -s name="${R}" \
+      -s description="Role for ${CLIENT_B_ID} (${R})" >/dev/null
+  fi
+done
+
+# =========================
+# 9) [追加] demo-user に client-b roles を付与
+# =========================
+# ------------------------------------------------------------
+# [追加] ここは「ユーザが premium/basis どちらを使えるか」を決める場所。
+#   - デモでは両方付与（両方の scope を要求できる状態）
+#   - 本番想定なら、premium だけは一部ユーザにのみ付与する
+#     -> premium scope を要求しても role が無ければ権限が載らない/拒否に寄る
+# ------------------------------------------------------------
+echo "Granting client-b roles to demo user (basic + premium for demo)"
+${KC} add-roles -r "${REALM_NAME}" \
+  --uusername "${DEMO_USER_USERNAME}" \
+  --cclientid "${CLIENT_B_ID}" \
+  --rolename "${B_ROLE_BASIC}" >/dev/null 2>&1 || true
+
+${KC} add-roles -r "${REALM_NAME}" \
+  --uusername "${DEMO_USER_USERNAME}" \
+  --cclientid "${CLIENT_B_ID}" \
+  --rolename "${B_ROLE_PREMIUM}" >/dev/null 2>&1 || true
+
+# =========================
+# 10) [追加] client scopes を2つ作る（scope-b-basic / scope-b-premium）
+# =========================
+create_scope_if_missing() {
+  local name="$1"
+  if ! ${KC} get client-scopes -r "${REALM_NAME}" -q name="${name}" --fields id | grep -q '"id"'; then
+    echo "Creating client scope: ${name}"
+    ${KC} create client-scopes -r "${REALM_NAME}" \
+      -s name="${name}" \
+      -s protocol="openid-connect" \
+      -s description="Token exchange selectable scope: ${name}" >/dev/null
+  fi
+}
+
+create_scope_if_missing "${SCOPE_B_BASIC}"
+create_scope_if_missing "${SCOPE_B_PREMIUM}"
+
+SCOPE_B_BASIC_ID=$(${KC} get client-scopes -r "${REALM_NAME}" -q name="${SCOPE_B_BASIC}" --fields id --format csv --noquotes | tail -n1)
+SCOPE_B_PREMIUM_ID=$(${KC} get client-scopes -r "${REALM_NAME}" -q name="${SCOPE_B_PREMIUM}" --fields id --format csv --noquotes | tail -n1)
+
+# =========================
+# 11) [追加] scope に role-scope-mapping を入れる
+# =========================
+# ------------------------------------------------------------
+# [追加] 「Role（権限）」と「Scope（トークンへ載せるパッケージ）」を分離する。
+#   - role は “持っている権限”
+#   - scope は “今回のトークンで提示する権限セット”
+#
+# これにより:
+#   - aud を固定（audience=client-b）にしつつ、
+#   - Token Exchange 時に scope=... を変えるだけで
+#     basic/premium の提示内容を動的に切り替えられる。
+# ------------------------------------------------------------
+add_role_to_scope() {
+  local scope_id="$1"
+  local role_name="$2"
+
+  local role_json
+  role_json=$(${KC} get "clients/${CLIENT_B_INTERNAL_ID}/roles/${role_name}" -r "${REALM_NAME}" --format json)
+
+  if ! ${KC} get "client-scopes/${scope_id}/scope-mappings/clients/${CLIENT_B_INTERNAL_ID}" -r "${REALM_NAME}" 2>/dev/null \
+      | grep -q "\"name\"[[:space:]]*:[[:space:]]*\"${role_name}\""; then
+    echo "Adding role-scope-mapping: scope_id=${scope_id} includes ${CLIENT_B_ID}.${role_name}"
+    printf '[%s]\n' "${role_json}" > /tmp/role-scope.json
+    ${KC} create "client-scopes/${scope_id}/scope-mappings/clients/${CLIENT_B_INTERNAL_ID}" -r "${REALM_NAME}" \
+      -f /tmp/role-scope.json >/dev/null
+  fi
+}
+
+add_role_to_scope "${SCOPE_B_BASIC_ID}" "${B_ROLE_BASIC}"
+add_role_to_scope "${SCOPE_B_PREMIUM_ID}" "${B_ROLE_PREMIUM}"
+
+# =========================
+# 12) [追加] client-a に optional client scopes として2つを紐づける
+# =========================
+# ------------------------------------------------------------
+# [追加] “動的切り替え”の要点。
+#   - Default に入れると常に有効になり、切り替えができない。
+#   - Optional に入れて、Token Exchange リクエストで
+#       scope=scope-b-basic   または
+#       scope=scope-b-premium
+#     を指定したときだけ有効になる。
+# ------------------------------------------------------------
+attach_optional_scope() {
+  local scope_id="$1"
+  local scope_name="$2"
+
+  if ! ${KC} get "clients/${CLIENT_A_INTERNAL_ID}/optional-client-scopes" -r "${REALM_NAME}" 2>/dev/null \
+        | grep -q "\"name\"[[:space:]]*:[[:space:]]*\"${scope_name}\""; then
+    echo "Attaching OPTIONAL client scope to client-a: ${scope_name}"
+    ${KC} update "clients/${CLIENT_A_INTERNAL_ID}/optional-client-scopes/${scope_id}" -r "${REALM_NAME}" >/dev/null
+  fi
+}
+
+attach_optional_scope "${SCOPE_B_BASIC_ID}" "${SCOPE_B_BASIC}"
+attach_optional_scope "${SCOPE_B_PREMIUM_ID}" "${SCOPE_B_PREMIUM}"
+
+# =========================
+# 13) 完了メッセージ（検証用コマンド）
 # =========================
 cat <<EOF
 
-Keycloak demo setup complete (Standard Token Exchange v2).
+Keycloak demo setup complete (Standard Token Exchange v2 + dynamic scopes).
 
 Realm: ${REALM_NAME}
-User:  ${DEMO_USER_USERNAME} / ${DEMO_USER_PASSWORD}
+User : ${DEMO_USER_USERNAME} / ${DEMO_USER_PASSWORD}
 
 Clients:
-- user-client (password grant): ${USER_CLIENT_ID}
-- requester (token exchange):    ${CLIENT_A_ID}
-- target (audience):             ${CLIENT_B_ID}
+- initial   (password grant): ${USER_CLIENT_ID}
+- requester (token exchange) : ${CLIENT_A_ID}
+- target    (audience)       : ${CLIENT_B_ID}
 
-Token Exchange v2 prerequisites created:
-- client-b role: ${CLIENT_B_ID}.${B_CLIENT_ROLE}
-- demo-user granted role: ${CLIENT_B_ID}.${B_CLIENT_ROLE}
-- client scope: ${B_CLIENT_SCOPE} includes ${CLIENT_B_ID}.${B_CLIENT_ROLE}
-- client-a has default scope: ${B_CLIENT_SCOPE}
-- client-a standard.token.exchange.enabled=true
+Dynamic scopes (select one at token exchange time):
+- basic  scope : ${SCOPE_B_BASIC}   (maps role ${CLIENT_B_ID}.${B_ROLE_BASIC})
+- premium scope: ${SCOPE_B_PREMIUM} (maps role ${CLIENT_B_ID}.${B_ROLE_PREMIUM})
 
-User token:
+User token (initial token; should include aud=${CLIENT_A_ID}):
 curl -s -X POST "${KEYCLOAK_URL}/realms/${REALM_NAME}/protocol/openid-connect/token" \
   -H "Content-Type: application/x-www-form-urlencoded" \
   -d "grant_type=password" \
@@ -244,7 +365,7 @@ curl -s -X POST "${KEYCLOAK_URL}/realms/${REALM_NAME}/protocol/openid-connect/to
   -d "password=${DEMO_USER_PASSWORD}" \
   -d "scope=profile email"
 
-Token exchange (requester=client-a, audience=client-b):
+Token exchange (aud fixed to client-b; scope selectable = basic):
 curl -s -X POST "${KEYCLOAK_URL}/realms/${REALM_NAME}/protocol/openid-connect/token" \
   -H "Content-Type: application/x-www-form-urlencoded" \
   -u "${CLIENT_A_ID}:${CLIENT_A_SECRET}" \
@@ -252,6 +373,18 @@ curl -s -X POST "${KEYCLOAK_URL}/realms/${REALM_NAME}/protocol/openid-connect/to
   -d "subject_token=<USER_ACCESS_TOKEN>" \
   -d "subject_token_type=urn:ietf:params:oauth:token-type:access_token" \
   -d "requested_token_type=urn:ietf:params:oauth:token-type:access_token" \
-  -d "audience=${CLIENT_B_ID}"
+  -d "audience=${CLIENT_B_ID}" \
+  -d "scope=${SCOPE_B_BASIC}"
+
+Token exchange (aud fixed to client-b; scope selectable = premium):
+curl -s -X POST "${KEYCLOAK_URL}/realms/${REALM_NAME}/protocol/openid-connect/token" \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  -u "${CLIENT_A_ID}:${CLIENT_A_SECRET}" \
+  -d "grant_type=urn:ietf:params:oauth:grant-type:token-exchange" \
+  -d "subject_token=<USER_ACCESS_TOKEN>" \
+  -d "subject_token_type=urn:ietf:params:oauth:token-type:access_token" \
+  -d "requested_token_type=urn:ietf:params:oauth:token-type:access_token" \
+  -d "audience=${CLIENT_B_ID}" \
+  -d "scope=${SCOPE_B_PREMIUM}"
 
 EOF
