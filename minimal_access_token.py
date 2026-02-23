@@ -157,7 +157,7 @@ def main() -> int:
         "subject_token_type": "urn:ietf:params:oauth:token-type:access_token",
         "requested_token_type": "urn:ietf:params:oauth:token-type:access_token",
         "audience": AUDIENCE_CLIENT_B,
-        "scope": "scope-b-premium scope-b-basic",
+        "scope": "scope-b-premium",
     }
 
     try:
